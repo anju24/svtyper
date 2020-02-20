@@ -165,6 +165,10 @@ def sv_genotype(bam_string,
         out_bam = pysam.AlignmentFile(alignment_outpath, 'wb', template_bam)
         template_bam.close()
 
+        supporting_reads_file = alignment_outpath.replace('bam', 'tsv')
+        supporting_reads_fh = open(supporting_reads_file, 'w')
+        supporting_reads_fh.write('chromA,chromB,posA,posB,svtype,ref_support,ref_pe_support,alt_clip_support,alt_pe_support,read_id,read_reference_start,read_reference_end\n')
+
     # write the JSON for each sample's libraries
     if lib_info_path is not None and not os.path.isfile(lib_info_path):
         logging.info('Writing library metrics to %s...' % lib_info_path)
@@ -287,6 +291,9 @@ def sv_genotype(bam_string,
             ref_span, alt_span = 0, 0
             ref_seq, alt_seq = 0, 0
             alt_clip = 0
+            metrics = {}
+            for i in ['ref_count', 'alt_clip_count', 'ref_pe_count', 'alt_pe_count']:
+                metrics[i] = 0
 
             # ref_ciA = ciA
             # ref_ciB = ciB
@@ -297,6 +304,7 @@ def sv_genotype(bam_string,
                 fragment = read_batch[query_name]
                 # boolean on whether to write the fragment
                 write_fragment = False
+                supporting_read = []
 
                 # -------------------------------------
                 # Check for split-read evidence
@@ -312,6 +320,8 @@ def sv_genotype(bam_string,
 
                         read.set_tag('XV', 'R')
                         write_fragment = True
+                        metrics['ref_count'] += 1
+                        supporting_read.append('ref')
 
                 # get non-reference split-read support
                 for split in fragment.split_reads:
@@ -330,6 +340,8 @@ def sv_genotype(bam_string,
                     if p_alt > 0:
                         split.tag_split(p_alt)
                         write_fragment = True
+                        supporting_read.append('alt_sr')
+                        metrics['alt_clip_count'] += 1
 
                 # -------------------------------------
                 # Check for paired-end evidence
@@ -371,6 +383,8 @@ def sv_genotype(bam_string,
 
                             fragment.tag_span(p_alt)
                             write_fragment = True
+                            supporting_read.append('alt_pe')
+                            metrics['alt_pe_count'] += 1
 
                     else:
                         p_alt = prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
@@ -378,6 +392,8 @@ def sv_genotype(bam_string,
 
                         fragment.tag_span(p_alt)
                         write_fragment = True
+                        supporting_read.append('alt_pe')
+                        metrics['alt_pe_count'] += 1
 
                 # # tally spanning reference pairs
                 if svtype == 'DEL' and posB - posA < 2 * fragment.lib.sd:
@@ -406,11 +422,18 @@ def sv_genotype(bam_string,
 
                             fragment.tag_span(1 - p_conc)
                             write_fragment = True
+                            metrics['ref_pe_count'] += 1
+                            supporting_read.append('ref_pe')
 
                 # write to BAM if requested
                 if alignment_outpath is not None and  write_fragment:
                     for read in fragment.primary_reads + [split.read for split in fragment.split_reads]:
                         out_bam_written_reads = write_alignment(read, out_bam, out_bam_written_reads)
+
+                if alignment_outpath is not None and supporting_read:
+                    # write it here supporting_reads_file
+                    supporting_reads_fh.write(','.join([chromA, chromB, str(posA), str(posB), str(svtype), str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read), read.qname, read.reference_name, str(read.reference_start), str(read.reference_end)]))
+                    supporting_reads_fh.write('\n')
 
             if debug:
                 print '--------------------------'
@@ -436,8 +459,10 @@ def sv_genotype(bam_string,
 
             if ref_seq + alt_seq + ref_span + alt_span + alt_clip > 0:
                 # get bayesian classifier
-                if var.info['SVTYPE'] == "DUP": is_dup = True
-                else: is_dup = False
+                if var.info['SVTYPE'] == "DUP":
+                    is_dup = True
+                else:
+                    is_dup = False
 
                 alt_splitters = alt_seq + alt_clip
                 QR = int(split_weight * ref_seq) + int(disc_weight * ref_span)
@@ -467,6 +492,10 @@ def sv_genotype(bam_string,
                     var.genotype(sample.name).set_format('AB', '%.2g' % (QA / float(QR + QA)))
                 except ZeroDivisionError:
                     var.genotype(sample.name).set_format('AB', '.')
+                var.genotype(sample.name).set_format('RC', int(metrics['ref_count']))
+                var.genotype(sample.name).set_format('RPC', int(metrics['ref_pe_count']))
+                var.genotype(sample.name).set_format('ACC', int(metrics['alt_clip_count']))
+                var.genotype(sample.name).set_format('APC', int(metrics['alt_pe_count']))
 
 
                 # assign genotypes
@@ -511,6 +540,10 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('QR', 0)
                 var.genotype(sample.name).set_format('QA', 0)
                 var.genotype(sample.name).set_format('AB', '.')
+                var.genotype(sample.name).set_format('RC', int(metrics['ref_count']))
+                var.genotype(sample.name).set_format('RPC', int(metrics['ref_pe_count']))
+                var.genotype(sample.name).set_format('ACC', int(metrics['alt_clip_count']))
+                var.genotype(sample.name).set_format('APC', int(metrics['alt_pe_count']))
 
         # after all samples have been processed, write
         vcf_out.write(var.get_var_string() + '\n')
@@ -529,6 +562,7 @@ def sv_genotype(bam_string,
     vcf_out.close()
     if alignment_outpath is not None:
         out_bam.close()
+        supporting_reads_fh.close()
 
     return
 

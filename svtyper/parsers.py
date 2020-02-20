@@ -45,6 +45,10 @@ class Vcf(object):
         self.add_format('RP', 1, 'Integer', 'Reference allele paired-end observation count, with partial observations recorded fractionally')
         self.add_format('AP', 'A', 'Integer', 'Alternate allele paired-end observation count, with partial observations recorded fractionally')
         self.add_format('AB', 'A', 'Float', 'Allele balance, fraction of observations from alternate allele, QA/(QR+QA)')
+        self.add_format('RC', 'A', 'Integer', 'Reference allele observation count (Color style)')
+        self.add_format('RPC', 'A', 'Integer', 'Reference allele observation for paired end read count (Color style)')
+        self.add_format('ACC', 'A', 'Integer', 'Alternate allele observation for clipped read count (Color style)')
+        self.add_format('APC', 'A', 'Integer', 'Alternate allele observation for paired end read count (Color style)')
 
     def add_header(self, header):
         for line in header:
