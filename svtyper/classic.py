@@ -79,7 +79,7 @@ def gather_reads(sample,
     for i, read in enumerate(sample.bam.fetch(chrom,
                                  max(pos + ci[0] - fetch_flank, 0),
                                  min(pos + ci[1] + fetch_flank, chrom_length))):
-        if read.is_unmapped or read.is_duplicate:
+        if read.is_unmapped or read.is_duplicate or read.mapq < 20 or read.is_qcfail:
             continue
 
         lib = sample.get_lib(read.get_tag('RG'))
