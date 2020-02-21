@@ -53,6 +53,12 @@ class Vcf(object):
         self.add_format('ERPC', 'A', 'Integer', 'Reference allele observation for paired end read count at end breakpoint (Color style)')
         self.add_format('EASC', 'A', 'Integer', 'Alternate allele observation for clipped read count at end breakpoint (Color style)')
         self.add_format('EAPC', 'A', 'Integer', 'Alternate allele observation for paired end read count at end breakpoint (Color style)')
+        self.add_format('BRC', 'A', 'Integer', 'Reference allele observation count at both breakpoints (Color style)')
+        self.add_format('BRPC', 'A', 'Integer', 'Reference allele observation for paired end read count at both breakpoints (Color style)')
+        self.add_format('BASC', 'A', 'Integer', 'Alternate allele observation for clipped read count at both breakpoints (Color style)')
+        self.add_format('BAPC', 'A', 'Integer', 'Alternate allele observation for paired end read count at both breakpoints (Color style)')
+        self.add_format('ISM', 'A', 'Float', 'Insert size mean (from svtyper)')
+        self.add_format('ISSD', 'A', 'Float', 'Insert size std dev (from svtyper)')
 
     def add_header(self, header):
         for line in header:
@@ -698,6 +704,14 @@ class Sample(object):
     # get the maximum fetch flank for reading the BAM file
     def get_fetch_flank(self, z):
         return max([lib.mean + (lib.sd * z) for lib in self.lib_dict.values()])
+
+    # return mean insert size
+    def get_mean_insert_size(self):
+        return max([lib.mean for lib in self.lib_dict.values()])
+ 
+    # return std dev insert size
+    def get_stddev_insert_size(self):
+        return max([lib.sd for lib in self.lib_dict.values()])
 
     # return the library object for a specified read group
     def get_lib(self, readgroup):

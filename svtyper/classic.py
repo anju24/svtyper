@@ -166,7 +166,7 @@ def sv_genotype(bam_string,
 
         supporting_reads_file = alignment_outpath.replace('bam', 'tsv')
         supporting_reads_fh = open(supporting_reads_file, 'w')
-        supporting_reads_fh.write('chromA,chromB,posA,posB,svtype,ref_support,ref_pe_support,alt_clip_support,alt_pe_support,read_id,read_reference_start,read_reference_end\n')
+        supporting_reads_fh.write('chromA,chromB,posA,posB,svtype,read_id,read_chrom,read_reference_start,read_reference_end,start_ref_support,start_ref_pe_support,start_alt_sr_support,start_alt_pe_support,end_ref_support,end_ref_pe_support,end_alt_sr_support,end_alt_pe_support\n')
     else:
         out_bam = None
         supporting_reads_fh = None
@@ -296,19 +296,19 @@ def sv_genotype(bam_string,
 
             metrics = {'start': {}, 'end': {}}
             # run metrics for each breakpoint separately
-            metrics['start'] = calculate_metrics(start_read_batch, read_batch_type='start', var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh, out_bam)
-            metrics['end'] = calculate_metrics(end_read_batch, read_batch_type='end', var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh, out_bam)
+            metrics['start'] = calculate_metrics(start_read_batch, 'start', var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh, out_bam)
+            metrics['end'] = calculate_metrics(end_read_batch, 'end', var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh, out_bam)
 
             # run metrics for both sides of breakpoints
             # no bam file and supporting reads files is written here since they are already written in running the method for each breakpoint separately
-            both_metrics = calculate_metrics(read_batch, read_batch_type='both', var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, None, None)
+            metrics['both'] = calculate_metrics(read_batch, 'both', var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, None, None)
 
             # set these for metrics from both sides of breakpoints
-            ref_span = both_metrics['ref_span']
-            alt_span = both_metrics['alt_span']
-            ref_seq = both_metrics['ref_seq']
-            alt_seq = both_metrics['alt_seq']
-            alt_clip = both_metrics['alt_clip']
+            ref_span = metrics['both']['ref_span']
+            alt_span = metrics['both']['alt_span']
+            ref_seq = metrics['both']['ref_seq']
+            alt_seq = metrics['both']['alt_seq']
+            alt_clip = metrics['both']['alt_clip']
 
             if debug:
                 print '--------------------------'
@@ -375,6 +375,12 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('ERPC', int(metrics['end']['ref_pe_count']))
                 var.genotype(sample.name).set_format('EASC', int(metrics['end']['alt_clip_count']))
                 var.genotype(sample.name).set_format('EAPC', int(metrics['end']['alt_pe_count']))
+                var.genotype(sample.name).set_format('BRC', int(metrics['both']['ref_count']))
+                var.genotype(sample.name).set_format('BRPC', int(metrics['both']['ref_pe_count']))
+                var.genotype(sample.name).set_format('BASC', int(metrics['both']['alt_clip_count']))
+                var.genotype(sample.name).set_format('BAPC', int(metrics['both']['alt_pe_count']))
+                var.genotype(sample.name).set_format('ISM', sample.get_mean_insert_size())
+                var.genotype(sample.name).set_format('ISSD', sample.get_stddev_insert_size())
 
 
                 # assign genotypes
@@ -419,10 +425,18 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('QR', 0)
                 var.genotype(sample.name).set_format('QA', 0)
                 var.genotype(sample.name).set_format('AB', '.')
-                var.genotype(sample.name).set_format('RC', int(metrics['ref_count']))
-                var.genotype(sample.name).set_format('RPC', int(metrics['ref_pe_count']))
-                var.genotype(sample.name).set_format('ACC', int(metrics['alt_clip_count']))
-                var.genotype(sample.name).set_format('APC', int(metrics['alt_pe_count']))
+                var.genotype(sample.name).set_format('SRC', int(metrics['start']['ref_count']))
+                var.genotype(sample.name).set_format('SRPC', int(metrics['start']['ref_pe_count']))
+                var.genotype(sample.name).set_format('SASC', int(metrics['start']['alt_clip_count']))
+                var.genotype(sample.name).set_format('SAPC', int(metrics['start']['alt_pe_count']))
+                var.genotype(sample.name).set_format('ERC', int(metrics['end']['ref_count']))
+                var.genotype(sample.name).set_format('ERPC', int(metrics['end']['ref_pe_count']))
+                var.genotype(sample.name).set_format('EASC', int(metrics['end']['alt_clip_count']))
+                var.genotype(sample.name).set_format('EAPC', int(metrics['end']['alt_pe_count']))
+                var.genotype(sample.name).set_format('BRC', int(metrics['both']['ref_count']))
+                var.genotype(sample.name).set_format('BRPC', int(metrics['both']['ref_pe_count']))
+                var.genotype(sample.name).set_format('BASC', int(metrics['both']['alt_clip_count']))
+                var.genotype(sample.name).set_format('BAPC', int(metrics['both']['alt_pe_count']))
 
         # after all samples have been processed, write
         vcf_out.write(var.get_var_string() + '\n')
