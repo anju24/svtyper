@@ -283,18 +283,32 @@ def sv_genotype(bam_string,
         if o2_is_reverse: posB += 1
 
         for sample in sample_list:
+            # grab reads for start and end of breakpoints
+            start_read_batch = {}
+            end_read_batch = {}
+            start_read_batch, many = gather_reads(sample, chromA, posA, ciA, z, start_read_batch, max_reads)
+            end_read_batch, many = gather_reads(sample, chromB, posB, ciB, z, end_read_batch, max_reads)
             # grab reads from both sides of breakpoint
             read_batch, many = gather_all_reads(sample, chromA, posA, ciA, chromB, posB, ciB, z, max_reads)
             if many:
                 var.genotype(sample.name).set_format('GT', './.')
                 continue
 
-            metrics = calculate_metrics(read_batch, var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh, out_bam)
-            ref_span = metrics['ref_span']
-            alt_span = metrics['alt_span']
-            ref_seq = metrics['ref_seq']
-            alt_seq = metrics['alt_seq']
-            alt_clip = metrics['alt_clip']
+            metrics = {'start': {}, 'end': {}}
+            # run metrics for each breakpoint separately
+            metrics['start'] = calculate_metrics(start_read_batch, read_batch_type='start', var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh, out_bam)
+            metrics['end'] = calculate_metrics(end_read_batch, read_batch_type='end', var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh, out_bam)
+
+            # run metrics for both sides of breakpoints
+            # no bam file and supporting reads files is written here since they are already written in running the method for each breakpoint separately
+            both_metrics = calculate_metrics(read_batch, read_batch_type='both', var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, None, None)
+
+            # set these for metrics from both sides of breakpoints
+            ref_span = both_metrics['ref_span']
+            alt_span = both_metrics['alt_span']
+            ref_seq = both_metrics['ref_seq']
+            alt_seq = both_metrics['alt_seq']
+            alt_clip = both_metrics['alt_clip']
 
             if debug:
                 print '--------------------------'
@@ -353,10 +367,14 @@ def sv_genotype(bam_string,
                     var.genotype(sample.name).set_format('AB', '%.2g' % (QA / float(QR + QA)))
                 except ZeroDivisionError:
                     var.genotype(sample.name).set_format('AB', '.')
-                var.genotype(sample.name).set_format('RC', int(metrics['ref_count']))
-                var.genotype(sample.name).set_format('RPC', int(metrics['ref_pe_count']))
-                var.genotype(sample.name).set_format('ACC', int(metrics['alt_clip_count']))
-                var.genotype(sample.name).set_format('APC', int(metrics['alt_pe_count']))
+                var.genotype(sample.name).set_format('SRC', int(metrics['start']['ref_count']))
+                var.genotype(sample.name).set_format('SRPC', int(metrics['start']['ref_pe_count']))
+                var.genotype(sample.name).set_format('SASC', int(metrics['start']['alt_clip_count']))
+                var.genotype(sample.name).set_format('SAPC', int(metrics['start']['alt_pe_count']))
+                var.genotype(sample.name).set_format('ERC', int(metrics['end']['ref_count']))
+                var.genotype(sample.name).set_format('ERPC', int(metrics['end']['ref_pe_count']))
+                var.genotype(sample.name).set_format('EASC', int(metrics['end']['alt_clip_count']))
+                var.genotype(sample.name).set_format('EAPC', int(metrics['end']['alt_pe_count']))
 
 
                 # assign genotypes
@@ -428,7 +446,7 @@ def sv_genotype(bam_string,
     return
 
 
-def calculate_metrics(read_batch, var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh=None, out_bam=None):
+def calculate_metrics(read_batch, read_batch_type, var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh=None, out_bam=None):
     split_slop = 3 # amount of slop around breakpoint to count splitters
     # initialize counts to zero
     ref_span, alt_span = 0, 0
@@ -575,9 +593,13 @@ def calculate_metrics(read_batch, var, chromA, chromB, posA, posB, ciA, ciB, min
 
         if supporting_reads_fh is not None and supporting_read:
             # write it here supporting_reads_file
-            supporting_reads_fh.write(','.join([chromA, chromB, str(posA), str(posB), str(svtype), str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read), read.qname, read.reference_name, str(read.reference_start), str(read.reference_end)]))
+            if read_batch_type == 'start':
+                supporting_reads_fh.write(','.join([chromA, chromB, str(posA), str(posB), str(svtype), read.qname, read.reference_name, str(read.reference_start), str(read.reference_end), str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read), '', '', '', '']))
+            elif read_batch_type == 'end':
+                supporting_reads_fh.write(','.join([chromA, chromB, str(posA), str(posB), str(svtype), read.qname, read.reference_name, str(read.reference_start), str(read.reference_end), '', '', '', '',  str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read)]))
             supporting_reads_fh.write('\n')
-    metrics.update({'ref_span': ref_span, 'alt_span': alt_span, 'ref_seq': ref_seq, 'alt_seq': alt_seq, 'alt_clip': alt_clip})
+    if read_batch_type == 'both':
+        metrics.update({'ref_span': ref_span, 'alt_span': alt_span, 'ref_seq': ref_seq, 'alt_seq': alt_seq, 'alt_clip': alt_clip})
     return metrics
     
 
