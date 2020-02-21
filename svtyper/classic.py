@@ -607,10 +607,21 @@ def calculate_metrics(read_batch, read_batch_type, var, chromA, chromB, posA, po
 
         if supporting_reads_fh is not None and supporting_read:
             # write it here supporting_reads_file
+            read_ids = []
+            read_starts = []
+            read_ends = []
+            read_chrs = []
+            for read in fragment.primary_reads + [split.read for split in fragment.split_reads]:
+                read_ids.append(read.qname)
+                read_starts.append(str(read.reference_start))
+                read_ends.append(str(read.reference_end))
+                read_chrs.append(read.reference_name)
+            output_line = [chromA, chromB, str(posA), str(posB), str(svtype), ','.join(read_ids), ','.join(read_chrs), ','.join(read_starts), ','.join(read_ends)]
             if read_batch_type == 'start':
-                supporting_reads_fh.write(','.join([chromA, chromB, str(posA), str(posB), str(svtype), read.qname, read.reference_name, str(read.reference_start), str(read.reference_end), str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read), '', '', '', '']))
+                output_line.extend([str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read), '', '', '', ''])
             elif read_batch_type == 'end':
-                supporting_reads_fh.write(','.join([chromA, chromB, str(posA), str(posB), str(svtype), read.qname, read.reference_name, str(read.reference_start), str(read.reference_end), '', '', '', '',  str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read)]))
+                output_line.extend(['', '', '', '',  str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read)])
+            supporting_reads_fh.write('\t'.join(output_line))
             supporting_reads_fh.write('\n')
     if read_batch_type == 'both':
         metrics.update({'ref_span': ref_span, 'alt_span': alt_span, 'ref_seq': ref_seq, 'alt_seq': alt_seq, 'alt_clip': alt_clip})
