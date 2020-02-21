@@ -160,7 +160,6 @@ def sv_genotype(bam_string,
     # diagnostic dump of relevant BAM reads
     if alignment_outpath is not None:
         # create a BAM file of the reads used for genotyping
-        out_bam_written_reads = set()
         template_bam = pysam.AlignmentFile(bam_string.split(',')[0], 'rb')
         out_bam = pysam.AlignmentFile(alignment_outpath, 'wb', template_bam)
         template_bam.close()
@@ -168,6 +167,10 @@ def sv_genotype(bam_string,
         supporting_reads_file = alignment_outpath.replace('bam', 'tsv')
         supporting_reads_fh = open(supporting_reads_file, 'w')
         supporting_reads_fh.write('chromA,chromB,posA,posB,svtype,ref_support,ref_pe_support,alt_clip_support,alt_pe_support,read_id,read_reference_start,read_reference_end\n')
+    else:
+        out_bam = None
+        supporting_reads_fh = None
+    out_bam_written_reads = set()
 
     # write the JSON for each sample's libraries
     if lib_info_path is not None and not os.path.isfile(lib_info_path):
@@ -185,7 +188,6 @@ def sv_genotype(bam_string,
 
     # set variables for genotyping
     z = 3
-    split_slop = 3 # amount of slop around breakpoint to count splitters
     in_header = True
     header = []
     breakend_dict = {} # cache to hold unmatched generic breakends for genotyping
@@ -287,153 +289,12 @@ def sv_genotype(bam_string,
                 var.genotype(sample.name).set_format('GT', './.')
                 continue
 
-            # initialize counts to zero
-            ref_span, alt_span = 0, 0
-            ref_seq, alt_seq = 0, 0
-            alt_clip = 0
-            metrics = {}
-            for i in ['ref_count', 'alt_clip_count', 'ref_pe_count', 'alt_pe_count']:
-                metrics[i] = 0
-
-            # ref_ciA = ciA
-            # ref_ciB = ciB
-            ref_ciA = [0,0]
-            ref_ciB = [0,0]
-
-            for query_name in sorted(read_batch.keys()):
-                fragment = read_batch[query_name]
-                # boolean on whether to write the fragment
-                write_fragment = False
-                supporting_read = []
-
-                # -------------------------------------
-                # Check for split-read evidence
-                # -------------------------------------
-
-                # get reference sequences
-                for read in fragment.primary_reads:
-                    is_ref_seq_A = fragment.is_ref_seq(read, var, chromA, posA, ciA, min_aligned)
-                    is_ref_seq_B = fragment.is_ref_seq(read, var, chromB, posB, ciB, min_aligned)
-                    if (is_ref_seq_A or is_ref_seq_B):
-                        p_reference = prob_mapq(read)
-                        ref_seq += p_reference
-
-                        read.set_tag('XV', 'R')
-                        write_fragment = True
-                        metrics['ref_count'] += 1
-                        supporting_read.append('ref')
-
-                # get non-reference split-read support
-                for split in fragment.split_reads:
-
-                    split_lr = split.is_split_straddle(chromA, posA, ciA,
-                                                       chromB, posB, ciB,
-                                                       o1_is_reverse, o2_is_reverse,
-                                                       svtype, split_slop)
-                    # p_alt = prob_mapq(split.query_left) * prob_mapq(split.query_right)
-                    p_alt = (prob_mapq(split.query_left) * split_lr[0] + prob_mapq(split.query_right) * split_lr[1]) / 2.0
-                    if split.is_soft_clip:
-                        alt_clip += p_alt
-                    else:
-                        alt_seq += p_alt
-
-                    if p_alt > 0:
-                        split.tag_split(p_alt)
-                        write_fragment = True
-                        supporting_read.append('alt_sr')
-                        metrics['alt_clip_count'] += 1
-
-                # -------------------------------------
-                # Check for paired-end evidence
-                # -------------------------------------
-
-                # tally spanning alternate pairs
-                if svtype == 'DEL' and posB - posA < 2 * fragment.lib.sd:
-                    alt_straddle = False
-                else:
-                    alt_straddle = fragment.is_pair_straddle(chromA, posA, ciA,
-                                                             chromB, posB, ciB,
-                                                             o1_is_reverse, o2_is_reverse,
-                                                             min_aligned,
-                                                             fragment.lib)
-
-                # check both sides if inversion (perhaps should do this for BND as well?)
-                if svtype in ('INV'):
-                    alt_straddle_reciprocal = fragment.is_pair_straddle(chromA, posA, ciA,
-                                                                        chromB, posB, ciB,
-                                                                        not o1_is_reverse,
-                                                                        not o2_is_reverse,
-                                                                        min_aligned,
-                                                                        fragment.lib)
-                else:
-                    alt_straddle_reciprocal = False
-
-                if alt_straddle or alt_straddle_reciprocal:
-                    if svtype == 'DEL':
-                        p_conc = fragment.p_concordant(var_length)
-                        if p_conc is not None:
-                            p_alt = (1 - p_conc) * prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
-                            alt_span += p_alt
-
-                            # # since an alt straddler is by definition also a reference straddler,
-                            # # we can bail out early here to save some time
-                            # p_reference = p_conc * prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
-                            # ref_span += p_reference
-                            # continue
-
-                            fragment.tag_span(p_alt)
-                            write_fragment = True
-                            supporting_read.append('alt_pe')
-                            metrics['alt_pe_count'] += 1
-
-                    else:
-                        p_alt = prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
-                        alt_span += p_alt
-
-                        fragment.tag_span(p_alt)
-                        write_fragment = True
-                        supporting_read.append('alt_pe')
-                        metrics['alt_pe_count'] += 1
-
-                # # tally spanning reference pairs
-                if svtype == 'DEL' and posB - posA < 2 * fragment.lib.sd:
-                    ref_straddle_A = False
-                    ref_straddle_B = False
-                else:
-                    ref_straddle_A = fragment.is_pair_straddle(chromA, posA, ref_ciA,
-                                                               chromA, posA, ref_ciA,
-                                                               False, True,
-                                                               min_aligned,
-                                                               fragment.lib)
-                    ref_straddle_B = fragment.is_pair_straddle(chromB, posB, ref_ciB,
-                                                               chromB, posB, ref_ciB,
-                                                               False, True,
-                                                               min_aligned,
-                                                               fragment.lib)
-
-                if ref_straddle_A or ref_straddle_B:
-                    # don't allow the pair to jump the entire variant, except for
-                    # length-changing SVs like deletions
-                    if not (ref_straddle_A and ref_straddle_B) or svtype == 'DEL':
-                        p_conc = fragment.p_concordant(var_length)
-                        if p_conc is not None:
-                            p_reference = p_conc * prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
-                            ref_span += (ref_straddle_A + ref_straddle_B) * p_reference / 2
-
-                            fragment.tag_span(1 - p_conc)
-                            write_fragment = True
-                            metrics['ref_pe_count'] += 1
-                            supporting_read.append('ref_pe')
-
-                # write to BAM if requested
-                if alignment_outpath is not None and  write_fragment:
-                    for read in fragment.primary_reads + [split.read for split in fragment.split_reads]:
-                        out_bam_written_reads = write_alignment(read, out_bam, out_bam_written_reads)
-
-                if alignment_outpath is not None and supporting_read:
-                    # write it here supporting_reads_file
-                    supporting_reads_fh.write(','.join([chromA, chromB, str(posA), str(posB), str(svtype), str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read), read.qname, read.reference_name, str(read.reference_start), str(read.reference_end)]))
-                    supporting_reads_fh.write('\n')
+            metrics = calculate_metrics(read_batch, var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh, out_bam)
+            ref_span = metrics['ref_span']
+            alt_span = metrics['alt_span']
+            ref_seq = metrics['ref_seq']
+            alt_seq = metrics['alt_seq']
+            alt_clip = metrics['alt_clip']
 
             if debug:
                 print '--------------------------'
@@ -565,6 +426,160 @@ def sv_genotype(bam_string,
         supporting_reads_fh.close()
 
     return
+
+
+def calculate_metrics(read_batch, var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh=None, out_bam=None):
+    split_slop = 3 # amount of slop around breakpoint to count splitters
+    # initialize counts to zero
+    ref_span, alt_span = 0, 0
+    ref_seq, alt_seq = 0, 0
+    alt_clip = 0
+    metrics = {}
+    for i in ['ref_count', 'alt_clip_count', 'ref_pe_count', 'alt_pe_count']:
+        metrics[i] = 0
+
+    # ref_ciA = ciA
+    # ref_ciB = ciB
+    ref_ciA = [0,0]
+    ref_ciB = [0,0]
+
+    for query_name in sorted(read_batch.keys()):
+        fragment = read_batch[query_name]
+        # boolean on whether to write the fragment
+        write_fragment = False
+        supporting_read = []
+
+        # -------------------------------------
+        # Check for split-read evidence
+        # -------------------------------------
+
+        # get reference sequences
+        for read in fragment.primary_reads:
+            is_ref_seq_A = fragment.is_ref_seq(read, var, chromA, posA, ciA, min_aligned)
+            is_ref_seq_B = fragment.is_ref_seq(read, var, chromB, posB, ciB, min_aligned)
+            if (is_ref_seq_A or is_ref_seq_B):
+                p_reference = prob_mapq(read)
+                ref_seq += p_reference
+
+                read.set_tag('XV', 'R')
+                write_fragment = True
+                metrics['ref_count'] += 1
+                supporting_read.append('ref')
+
+        # get non-reference split-read support
+        for split in fragment.split_reads:
+
+            split_lr = split.is_split_straddle(chromA, posA, ciA,
+                                               chromB, posB, ciB,
+                                               o1_is_reverse, o2_is_reverse,
+                                               svtype, split_slop)
+            # p_alt = prob_mapq(split.query_left) * prob_mapq(split.query_right)
+            p_alt = (prob_mapq(split.query_left) * split_lr[0] + prob_mapq(split.query_right) * split_lr[1]) / 2.0
+            if split.is_soft_clip:
+                alt_clip += p_alt
+            else:
+                alt_seq += p_alt
+
+            if p_alt > 0:
+                split.tag_split(p_alt)
+                write_fragment = True
+                supporting_read.append('alt_sr')
+                metrics['alt_clip_count'] += 1
+
+        # -------------------------------------
+        # Check for paired-end evidence
+        # -------------------------------------
+
+        # tally spanning alternate pairs
+        if svtype == 'DEL' and posB - posA < 2 * fragment.lib.sd:
+            alt_straddle = False
+        else:
+            alt_straddle = fragment.is_pair_straddle(chromA, posA, ciA,
+                                                     chromB, posB, ciB,
+                                                     o1_is_reverse, o2_is_reverse,
+                                                     min_aligned,
+                                                     fragment.lib)
+
+        # check both sides if inversion (perhaps should do this for BND as well?)
+        if svtype in ('INV'):
+            alt_straddle_reciprocal = fragment.is_pair_straddle(chromA, posA, ciA,
+                                                                chromB, posB, ciB,
+                                                                not o1_is_reverse,
+                                                                not o2_is_reverse,
+                                                                min_aligned,
+                                                                fragment.lib)
+        else:
+            alt_straddle_reciprocal = False
+
+        if alt_straddle or alt_straddle_reciprocal:
+            if svtype == 'DEL':
+                p_conc = fragment.p_concordant(var_length)
+                if p_conc is not None:
+                    p_alt = (1 - p_conc) * prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
+                    alt_span += p_alt
+
+                    # # since an alt straddler is by definition also a reference straddler,
+                    # # we can bail out early here to save some time
+                    # p_reference = p_conc * prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
+                    # ref_span += p_reference
+                    # continue
+
+                    fragment.tag_span(p_alt)
+                    write_fragment = True
+                    supporting_read.append('alt_pe')
+                    metrics['alt_pe_count'] += 1
+
+            else:
+                p_alt = prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
+                alt_span += p_alt
+
+                fragment.tag_span(p_alt)
+                write_fragment = True
+                supporting_read.append('alt_pe')
+                metrics['alt_pe_count'] += 1
+
+        # # tally spanning reference pairs
+        if svtype == 'DEL' and posB - posA < 2 * fragment.lib.sd:
+            ref_straddle_A = False
+            ref_straddle_B = False
+        else:
+            ref_straddle_A = fragment.is_pair_straddle(chromA, posA, ref_ciA,
+                                                       chromA, posA, ref_ciA,
+                                                       False, True,
+                                                       min_aligned,
+                                                       fragment.lib)
+            ref_straddle_B = fragment.is_pair_straddle(chromB, posB, ref_ciB,
+                                                       chromB, posB, ref_ciB,
+                                                       False, True,
+                                                       min_aligned,
+                                                       fragment.lib)
+
+        if ref_straddle_A or ref_straddle_B:
+            # don't allow the pair to jump the entire variant, except for
+            # length-changing SVs like deletions
+            if not (ref_straddle_A and ref_straddle_B) or svtype == 'DEL':
+                p_conc = fragment.p_concordant(var_length)
+                if p_conc is not None:
+                    p_reference = p_conc * prob_mapq(fragment.readA) * prob_mapq(fragment.readB)
+                    ref_span += (ref_straddle_A + ref_straddle_B) * p_reference / 2
+
+                    fragment.tag_span(1 - p_conc)
+                    write_fragment = True
+                    metrics['ref_pe_count'] += 1
+                    supporting_read.append('ref_pe')
+
+        # write to BAM if requested
+        if out_bam is not None and  write_fragment:
+            for read in fragment.primary_reads + [split.read for split in fragment.split_reads]:
+                out_bam_written_reads = write_alignment(read, out_bam, out_bam_written_reads)
+
+        if supporting_reads_fh is not None and supporting_read:
+            # write it here supporting_reads_file
+            supporting_reads_fh.write(','.join([chromA, chromB, str(posA), str(posB), str(svtype), str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read), read.qname, read.reference_name, str(read.reference_start), str(read.reference_end)]))
+            supporting_reads_fh.write('\n')
+    metrics.update({'ref_span': ref_span, 'alt_span': alt_span, 'ref_seq': ref_seq, 'alt_seq': alt_seq, 'alt_clip': alt_clip})
+    return metrics
+    
 
 def set_up_logging(verbose):
     level = logging.WARNING
