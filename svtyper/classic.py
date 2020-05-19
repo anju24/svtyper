@@ -79,6 +79,9 @@ def gather_reads(sample,
     for i, read in enumerate(sample.bam.fetch(chrom,
                                  max(pos + ci[0] - fetch_flank, 0),
                                  min(pos + ci[1] + fetch_flank, chrom_length))):
+
+        # Color change: Added min mapq of 20 and qc pass reads only
+        # matches what we do in other places
         if read.is_unmapped or read.is_duplicate or read.mapq < 20 or read.is_qcfail:
             continue
 
@@ -460,6 +463,7 @@ def sv_genotype(bam_string,
     return
 
 
+# Color change: Created a function to call the metrics generation for start breakpoint, end breakpoint and both breakpoints together
 def calculate_metrics(read_batch, read_batch_type, var, chromA, chromB, posA, posB, ciA, ciB, min_aligned, o1_is_reverse, o2_is_reverse, var_length, svtype, out_bam_written_reads, supporting_reads_fh=None, out_bam=None):
     split_slop = 3 # amount of slop around breakpoint to count splitters
     # initialize counts to zero
@@ -605,6 +609,7 @@ def calculate_metrics(read_batch, read_batch_type, var, chromA, chromB, posA, po
             for read in fragment.primary_reads + [split.read for split in fragment.split_reads]:
                 out_bam_written_reads = write_alignment(read, out_bam, out_bam_written_reads)
 
+        # Color change: Write supporting reads into a file for debug purposes
         if supporting_reads_fh is not None and supporting_read:
             # write it here supporting_reads_file
             read_ids = []
@@ -618,10 +623,10 @@ def calculate_metrics(read_batch, read_batch_type, var, chromA, chromB, posA, po
                 read_chrs.append(read.reference_name)
             output_line = [chromA, chromB, str(posA), str(posB), str(svtype), ','.join(read_ids), ','.join(read_chrs), ','.join(read_starts), ','.join(read_ends)]
             if read_batch_type == 'start':
-                output_line.extend([str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read), '', '', '', ''])
+                output_line.extend(['ref' in supporting_read, 'ref_pe' in supporting_read, 'alt_sr' in supporting_read, 'alt_pe' in supporting_read, '', '', '', ''])
             elif read_batch_type == 'end':
-                output_line.extend(['', '', '', '',  str('ref' in supporting_read), str('ref_pe' in supporting_read), str('alt_sr' in supporting_read), str('alt_pe' in supporting_read)])
-            supporting_reads_fh.write('\t'.join(output_line))
+                output_line.extend(['', '', '', '',  'ref' in supporting_read, 'ref_pe' in supporting_read, 'alt_sr' in supporting_read, 'alt_pe' in supporting_read])
+            supporting_reads_fh.write('\t'.join(map(str,output_line)))
             supporting_reads_fh.write('\n')
     if read_batch_type == 'both':
         metrics.update({'ref_span': ref_span, 'alt_span': alt_span, 'ref_seq': ref_seq, 'alt_seq': alt_seq, 'alt_clip': alt_clip})
